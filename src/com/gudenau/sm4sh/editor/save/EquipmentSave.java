@@ -6,10 +6,19 @@ import com.gudenau.sm4sh.editor.Equipment;
 import com.gudenau.sm4sh.editor.util.FileUtils;
 
 public class EquipmentSave {
+	/** Where the game keeps the last number it handed out for item serials and equip stamps. */
+	private static final int COUNTER_OFFSET = 0xDA4;
+	
 	public Item[] equpment;
+	
+	/** The game's shared counter. Every serial (and equip stamp) in the table is at most this. */
+	public long counter;
 
 	public static EquipmentSave load(RandomAccessFile file) throws Exception {
 		EquipmentSave save = new EquipmentSave();
+
+		file.seek(COUNTER_OFFSET);
+		save.counter = FileUtils.readInt(file) & 0xFFFFFFFFL;
 
 		file.seek(0xE830);
 
@@ -37,6 +46,9 @@ public class EquipmentSave {
 	}
 
 	public void save(RandomAccessFile file) throws Exception {
+		file.seek(COUNTER_OFFSET);
+		FileUtils.writeInt((int) counter, file);
+		
 		file.seek(0xE830);
 		
 		for(Item i : equpment){
@@ -53,6 +65,59 @@ public class EquipmentSave {
 			FileUtils.writeByte(i.level, file);
 			FileUtils.writeShort(i.unknown2, file);
 		}
+	}
+
+	/**
+	 * Adds a new piece of equipment the same way the game does: in the first empty slot
+	 * (right after the last item), with serial = counter + 1, the counter bumped to match,
+	 * and the equip stamp left at 0. Returns the slot it went into, or -1 if the table is full.
+	 */
+	public int addItem(int category, int id) {
+		int slot = -1;
+		for(int i = 0; i < equpment.length; i++){
+			if(!equpment[i].valid){
+				slot = i;
+				break;
+			}
+		}
+		if(slot == -1){
+			return -1;
+		}
+		
+		// Never reuse a number that is already in the table, even if the counter looks low.
+		long highest = counter;
+		for(Item i : equpment){
+			if(i.valid){
+				highest = Math.max(highest, i.owner & 0xFFFFFFFFL);
+				highest = Math.max(highest, (i.owner >>> 32) & 0xFFFFFFFFL);
+			}
+		}
+		long serial = highest + 1;
+		counter = serial;
+		
+		Item item = equpment[slot];
+		item.owner = serial;   // low 4 bytes: serial, high 4 bytes: equip stamp (0 = never equipped)
+		
+		// Typical stats for a freshly found item: the type's main stat up, one other stat down.
+		item.attack = 0;
+		item.defence = 0;
+		item.speed = 0;
+		switch(category){
+		case 0: item.attack = 50; item.defence = -30; break;  // Brawn
+		case 1: item.defence = 50; item.speed = -30; break;   // Protection
+		default: item.speed = 50; item.attack = -30; break;   // Agility
+		}
+		item.range = 9;
+		item.category = (byte) category;
+		item.id = (byte) id;
+		item.bonus = -1;
+		item.unknown0 = -1;
+		item.unknown1 = 0;
+		item.level = 1;
+		item.unknown2 = 0;
+		item.valid = true;
+		
+		return slot;
 	}
 
 	public static class Item {

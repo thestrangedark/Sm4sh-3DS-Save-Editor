@@ -42,7 +42,7 @@ public class CharacterUnlocks implements WindowListener, ActionListener {
 		
 		ness			= new JCheckBox("Ness"					, character.ness);
 		falco			= new JCheckBox("Falco"					, character.falco);
-		wario			= new JCheckBox("Waio"					, character.wario);
+		wario			= new JCheckBox("Wario"					, character.wario);
 		lucina			= new JCheckBox("Lucina"				, character.lucina);
 		darkPit			= new JCheckBox("Dark Pit"				, character.darkPit);
 		drMario			= new JCheckBox("Dr. Mario"				, character.drMario);

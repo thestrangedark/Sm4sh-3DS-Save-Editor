@@ -122,6 +122,7 @@ public class MainFrame implements ActionListener {
 			
 			constraints.gridx = 2;
 			money = new JSpinner(new SpinnerNumberModel(0, 0, Integer.MAX_VALUE, 1));
+			EquipmentEditor.setupSpinner(money);
 			panel.add(money, constraints);
 			
 			constraints.gridx = 3;
@@ -142,13 +143,19 @@ public class MainFrame implements ActionListener {
 		
 		frame.setJMenuBar(menuBar);
 		frame.pack();
-		frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+		frame.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
+		frame.addWindowListener(new java.awt.event.WindowAdapter() {
+			@Override
+			public void windowClosing(java.awt.event.WindowEvent e) {
+				if(confirmDiscard()){
+					System.exit(0);
+				}
+			}
+		});
 		frame.setResizable(false);
 		FrameUtils.center(frame);
 		screen.close();
 		frame.setVisible(true);
-		
-		displayError("This is an alpha, use at your own risk!\nThis means MAKE BACKUPS, this is as-is.");
 	}
 
 	@Override
@@ -158,7 +165,11 @@ public class MainFrame implements ActionListener {
 		if(source == open){
 			openFile();
 		}else if(source == close){
-			updateCurrent(null);
+			if(frames.character != null || frames.equipment != null){
+				displayError("You must close all other windows before closing the save!");
+			}else if(confirmDiscard()){
+				updateCurrent(null);
+			}
 		}else if(source == save){
 			saveFile();
 		}else if(source == character){
@@ -171,13 +182,93 @@ public class MainFrame implements ActionListener {
 	}
 
 	private void saveFile() {
+		saveFile(frame);
+	}
+
+	/** Copies everything shown in the open windows into {@link #gameSave}. */
+	private void applyEditsToSave() {
+		if(frames.equipment != null){
+			frames.equipment.commit();
+		}
+		
+		try{
+			money.commitEdit();
+		}catch(java.text.ParseException e){
+			// Invalid text in the box: keep the last valid amount.
+		}
+		gameSave.money = ((Number)money.getValue()).longValue() & 0xFFFFFFFFL;
+	}
+
+	/** Copies both save files to *.bak, once per opened save, before the first write. */
+	private boolean backedUp = false;
+
+	private String backupIfNeeded() throws java.io.IOException {
+		if(backedUp){
+			return null;
+		}
+		for(File f : new File[]{currentAccount, currentSystem}){
+			java.nio.file.Files.copy(f.toPath(), new File(f.getPath() + ".bak").toPath(),
+					java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+		}
+		backedUp = true;
+		return currentSystem.getParentFile().getAbsolutePath();
+	}
+
+	/** Writes the open save to disk. {@code parent} is the window the result popup is shown over. */
+	public boolean saveFile(java.awt.Component parent) {
 		if(gameSave != null && currentAccount != null && currentSystem != null){
 			try{
+				applyEditsToSave();
+				String backupDir = backupIfNeeded();
 				gameSave.save(currentAccount, currentSystem);
+				if(backupDir != null){
+					JOptionPane.showMessageDialog(parent, "Saved!\n\nA backup of the save from before this edit was made as\naccount_data.bin.bak and system_data.bin.bak in:\n" + backupDir);
+				}else{
+					JOptionPane.showMessageDialog(parent, "Saved!");
+				}
+				return true;
 			}catch(Exception e){
 				displayError("Saving", e);
 			}
 		}
+		return false;
+	}
+
+	/** True when the open windows hold changes that are not in the file yet. */
+	private boolean hasUnsavedChanges() {
+		if(gameSave == null || currentSystem == null){
+			return false;
+		}
+		File temp = null;
+		try{
+			applyEditsToSave();
+			// Do a save into a scratch copy and see if it comes out different from the real file.
+			temp = File.createTempFile("sm4sh-check", ".bin");
+			java.nio.file.Files.copy(currentSystem.toPath(), temp.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+			gameSave.save(currentAccount, temp);
+			return !java.util.Arrays.equals(java.nio.file.Files.readAllBytes(currentSystem.toPath()),
+					java.nio.file.Files.readAllBytes(temp.toPath()));
+		}catch(Exception e){
+			e.printStackTrace();
+			return true; // Can't tell, so ask to be safe.
+		}finally{
+			if(temp != null){
+				temp.delete();
+			}
+		}
+	}
+
+	/** Asks about unsaved changes. Returns true if it is OK to go ahead and drop the open save. */
+	private boolean confirmDiscard() {
+		if(!hasUnsavedChanges()){
+			return true;
+		}
+		int choice = JOptionPane.showConfirmDialog(frame, "You have unsaved changes. Save them first?",
+				"Unsaved changes", JOptionPane.YES_NO_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
+		if(choice == JOptionPane.YES_OPTION){
+			return saveFile(frame);
+		}
+		return choice == JOptionPane.NO_OPTION;
 	}
 
 	private void fixSave() {
@@ -207,25 +298,39 @@ public class MainFrame implements ActionListener {
 			}
 		});
 		
+		if(gameSave == null || currentAccount == null || currentSystem == null){
+			displayError("Open the save you want to fix first.");
+			return;
+		}
+		
+		fileChooser.setDialogTitle("Pick a working save from your 3DS to copy the ID from");
+		
 		switch(fileChooser.showOpenDialog(frame)){
 		case JFileChooser.APPROVE_OPTION:
 			try{
+				String backupDir = backupIfNeeded();
+				
 				RandomAccessFile source = new RandomAccessFile(fileChooser.getSelectedFile(), "r");
 				source.seek(0x12);
 				byte[] data = new byte[4];
 				source.read(data);
 				source.close();
 				
-				RandomAccessFile dest = new RandomAccessFile(currentAccount, "w");
+				RandomAccessFile dest = new RandomAccessFile(currentAccount, "rw");
 				dest.seek(0x12);
 				dest.write(data, 0, 4);
 				dest.close();
 				
-				dest = new RandomAccessFile(currentSystem, "w");
+				dest = new RandomAccessFile(currentSystem, "rw");
 				dest.seek(0x12);
 				dest.write(data, 0, 4);
 				dest.close();
-			}catch(Throwable t){}
+				
+				JOptionPane.showMessageDialog(frame, "Save fixed!" + (backupDir != null
+						? "\n\nA backup was made as account_data.bin.bak and system_data.bin.bak in:\n" + backupDir : ""));
+			}catch(Throwable t){
+				displayError("fixing the save", t);
+			}
 			return;
 		}
 	}
@@ -243,6 +348,10 @@ public class MainFrame implements ActionListener {
 	private void openFile() {
 		if(frames.character != null || frames.equipment != null){
 			displayError("You must close all other windows before loading a new save!");
+			return;
+		}
+		
+		if(!confirmDiscard()){
 			return;
 		}
 		
@@ -292,17 +401,21 @@ public class MainFrame implements ActionListener {
 			money.setValue(0);
 			money.setEnabled(false);
 			equipment.setEnabled(false);
+			fix.setEnabled(false);
+			backedUp = false;
 			
 			character.setEnabled(false);
 		}else{
 			try{
+				backedUp = false;
 				currentAccount = new File(file.getParentFile(), "account_data.bin");
 				currentSystem = new File(file.getParentFile(), "system_data.bin");
 				gameSave = Save.loadSave(currentAccount, currentSystem);
 				currentFile.setText(file.getParentFile().getName());
-				money.setValue(gameSave.money);
+				money.setValue((int) Math.min(gameSave.money, Integer.MAX_VALUE));
 				money.setEnabled(true);
 				equipment.setEnabled(true);
+				fix.setEnabled(true);
 			
 				character.setEnabled(true);
 			}catch(Exception e){

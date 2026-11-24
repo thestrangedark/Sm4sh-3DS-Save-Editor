@@ -14,8 +14,14 @@ public class Character {
 		public boolean duckHunt = false;
 		public boolean jigglypuff = false;
 		
+		/** The value as read from the file, so bits this editor doesn't understand are kept. */
+		private long raw = 0x0000000249249249L;
+		
+		private static final long KNOWN_BITS = 0x0000000492492492L;
+		
 		public static Character load(long chars){
 			Character ret = new Character();
+			ret.raw = chars;
 			
 			ret.ness			= (chars & 0x0000000000000002L) != 0;
 			ret.falco			= (chars & 0x0000000000000010L) != 0;
@@ -34,7 +40,7 @@ public class Character {
 		}
 		
 		public long save(){
-			long ret = 0x0000000249249249L;
+			long ret = raw & ~KNOWN_BITS;
 			
 			ret |= ness			? 0x0000000000000002L : 0L;
 			ret |= falco		? 0x0000000000000010L : 0L;

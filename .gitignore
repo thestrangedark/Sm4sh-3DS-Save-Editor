@@ -46,3 +46,6 @@ bin
 .classpath
 .project
 .settings
+
+# Built jars (attach to a GitHub Release instead)
+*.jar
